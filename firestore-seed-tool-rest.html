@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Firestore データ投入ツール（REST API版）</title>
+<style>
+  :root { --bg:#f8f9fa; --card:#fff; --blue:#4285f4; --green:#34a853; --red:#ea4335; --yellow:#fbbc04; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:#333;padding:20px;max-width:760px;margin:0 auto}
+  h1{font-size:22px;margin-bottom:4px} .sub{color:#888;font-size:13px;margin-bottom:20px}
+  .card{background:var(--card);border-radius:12px;padding:16px 20px;margin-bottom:14px;box-shadow:0 1px 6px rgba(0,0,0,0.06);border-left:4px solid #ddd}
+  .card.active{border-left-color:var(--blue)} .card.done{border-left-color:var(--green)} .card.err{border-left-color:var(--red)}
+  .num{display:inline-flex;width:26px;height:26px;border-radius:50%;background:#e0e0e0;color:#888;align-items:center;justify-content:center;font-size:12px;font-weight:900;margin-right:8px}
+  .card.active .num{background:var(--blue);color:#fff} .card.done .num{background:var(--green);color:#fff}
+  .title{font-weight:700;font-size:15px}
+  .body{margin-top:10px;font-size:14px;line-height:1.8}
+  input[type=text]{width:100%;padding:8px 12px;border:2px solid #e0e0e0;border-radius:8px;font-size:13px;font-family:monospace;margin-top:4px}
+  input:focus{border-color:var(--blue);outline:none}
+  .row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .row label{width:100px;font-size:13px;font-weight:700;flex-shrink:0}
+  button{padding:8px 20px;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;margin-top:8px}
+  .btn-blue{background:var(--blue);color:#fff} .btn-blue:hover{background:#3367d6}
+  .btn-green{background:var(--green);color:#fff} .btn-yellow{background:var(--yellow);color:#333}
+  .btn-blue:disabled,.btn-green:disabled{background:#ccc;cursor:not-allowed}
+  .badge{display:inline-block;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700;margin-left:8px}
+  .badge-ok{background:#e6f4ea;color:var(--green)} .badge-err{background:#fce8e6;color:var(--red)} .badge-wait{background:#f1f1f1;color:#888} .badge-run{background:#e8f0fe;color:var(--blue)}
+  .log{margin-top:12px;background:#f5f5f5;border-radius:8px;padding:12px;font-size:12px;font-family:monospace;max-height:350px;overflow-y:auto;white-space:pre-wrap;line-height:1.8}
+  .log .ok{color:var(--green)} .log .er{color:var(--red)} .log .wr{color:#f57c00} .log .bl{color:var(--blue)}
+  pre.rules{background:#263238;color:#eee;padding:12px;border-radius:8px;font-size:10px;overflow:auto;max-height:180px;line-height:1.5;margin-top:8px}
+  a{color:var(--blue)}
+  details{margin-top:8px} details summary{cursor:pointer;color:var(--blue);font-size:13px}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<h1>🔧 Firestore データ投入ツール</h1>
+<p class="sub">REST API版 — Firebase SDK 不要、ブラウザだけで動きます</p>
+
+<!-- Step 1 -->
+<div class="card active" id="s1">
+  <span class="num">1</span><span class="title">Firebase 設定を入力</span>
+  <div class="body" id="s1b">
+    <p style="font-size:13px;color:#666;margin-bottom:8px">
+      <a href="https://console.firebase.google.com" target="_blank">Firebase Console</a> で以下を準備してください：
+    </p>
+    <details open>
+      <summary>準備手順（初めての場合）</summary>
+      <ol style="font-size:13px;padding-left:20px;line-height:2;margin-top:4px">
+        <li>Firebase Console でプロジェクトを作成</li>
+        <li>左メニュー「Firestore Database」→「データベースを作成」→ <b>テストモード</b> で開始</li>
+        <li>左メニュー「Authentication」→「始める」→「Google」を有効化</li>
+        <li>⚙ プロジェクト設定 → 全般 → 「ウェブアプリ」を追加</li>
+        <li>表示される firebaseConfig の値を下に入力</li>
+      </ol>
+    </details>
+    <div class="row"><label>apiKey</label><input type="text" id="apiKey" placeholder="AIzaSy..."></div>
+    <div class="row"><label>authDomain</label><input type="text" id="authDomain" placeholder="your-app.firebaseapp.com"></div>
+    <div class="row"><label>projectId</label><input type="text" id="projectId" placeholder="your-app-id"></div>
+    <button class="btn-blue" onclick="doStep1()">接続テスト</button>
+    <span class="badge badge-wait" id="s1badge">未接続</span>
+  </div>
+</div>
+
+<!-- Step 2 -->
+<div class="card" id="s2">
+  <span class="num">2</span><span class="title">Google ログイン</span>
+  <div class="body hidden" id="s2b">
+    <p style="font-size:13px;color:#666;margin-bottom:8px">教師アカウントでログインします。このUIDが teacherUids に設定されます。</p>
+    <button class="btn-blue" id="loginBtn" onclick="doStep2()">🔑 Googleでログイン</button>
+    <span class="badge badge-wait" id="s2badge">未ログイン</span>
+    <div id="userInfo" style="margin-top:8px;font-size:13px" class="hidden"></div>
+  </div>
+</div>
+
+<!-- Step 3 -->
+<div class="card" id="s3">
+  <span class="num">3</span><span class="title">セキュリティルール</span>
+  <div class="body hidden" id="s3b">
+    <p style="font-size:13px;color:#666">データ投入後に Firebase Console → Firestore → ルール に貼り付けてください。</p>
+    <p style="font-size:12px;color:#f57c00">⚠ 今はテストモードのまま次に進んでOK</p>
+    <button class="btn-yellow" onclick="copyRules()">📋 ルールをコピー</button>
+    <button class="btn-blue" onclick="doStep3()" style="margin-left:8px">次へ →</button>
+    <span id="rulesCopied" style="font-size:12px;color:var(--green)" class="hidden"> ✓ コピーしました</span>
+    <pre class="rules" id="rulesText"></pre>
+  </div>
+</div>
+
+<!-- Step 4 -->
+<div class="card" id="s4">
+  <span class="num">4</span><span class="title">データ投入</span>
+  <div class="body hidden" id="s4b">
+    <p style="font-size:13px;color:#666;margin-bottom:8px">config/app + 10テンプレートを Firestore REST API で書き込みます。</p>
+    <button class="btn-green" id="seedBtn" onclick="doStep4()">🚀 データ投入開始</button>
+    <span class="badge badge-wait" id="s4badge">未実行</span>
+    <div class="log hidden" id="seedLog"></div>
+  </div>
+</div>
+
+<!-- Step 5 -->
+<div class="card" id="s5">
+  <span class="num">5</span><span class="title">確認</span>
+  <div class="body hidden" id="s5b">
+    <button class="btn-blue" id="verifyBtn" onclick="doStep5()">✅ データ確認</button>
+    <span class="badge badge-wait" id="s5badge">未確認</span>
+    <div class="log hidden" id="verifyLog"></div>
+  </div>
+</div>
+
+<script>
+// ── State ──
+let CFG = {};
+let TOKEN = '';
+let USER = null;
+
+const RULES = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuth() { return request.auth != null; }
+    function isTeacher() {
+      return isAuth() && request.auth.uid in
+        get(/databases/$(database)/documents/config/app).data.teacherUids;
+    }
+    function isOwner(uid) { return isAuth() && request.auth.uid == uid; }
+
+    match /config/app { allow read: if isAuth(); allow write: if isTeacher(); }
+    match /templates/{t} { allow read: if isAuth(); }
+    match /users/{uid} {
+      allow read, write: if isOwner(uid);
+      match /rounds/{r} {
+        allow read, write: if isOwner(uid);
+        match /items/{i} { allow read, write: if isOwner(uid); }
+      }
+    }
+    match /helpRequests/{r} {
+      allow create: if isAuth() && request.resource.data.studentUid == request.auth.uid;
+      allow read, update: if isTeacher();
+    }
+  }
+}`;
+
+// ── Firestore REST helpers ──
+function fsBase() {
+  return `https://firestore.googleapis.com/v1/projects/${CFG.projectId}/databases/(default)/documents`;
+}
+
+function toFirestoreValue(val) {
+  if (val === null || val === undefined) return { nullValue: null };
+  if (typeof val === 'boolean') return { booleanValue: val };
+  if (typeof val === 'number') {
+    if (Number.isInteger(val)) return { integerValue: String(val) };
+    return { doubleValue: val };
+  }
+  if (typeof val === 'string') return { stringValue: val };
+  if (Array.isArray(val)) return { arrayValue: { values: val.map(toFirestoreValue) } };
+  if (typeof val === 'object') {
+    const fields = {};
+    for (const [k, v] of Object.entries(val)) {
+      fields[k] = toFirestoreValue(v);
+    }
+    return { mapValue: { fields } };
+  }
+  return { stringValue: String(val) };
+}
+
+function toFirestoreDoc(obj) {
+  const fields = {};
+  for (const [k, v] of Object.entries(obj)) {
+    fields[k] = toFirestoreValue(v);
+  }
+  return { fields };
+}
+
+function fromFirestoreValue(v) {
+  if ('stringValue' in v) return v.stringValue;
+  if ('integerValue' in v) return parseInt(v.integerValue);
+  if ('doubleValue' in v) return v.doubleValue;
+  if ('booleanValue' in v) return v.booleanValue;
+  if ('nullValue' in v) return null;
+  if ('arrayValue' in v) return (v.arrayValue.values || []).map(fromFirestoreValue);
+  if ('mapValue' in v) {
+    const obj = {};
+    for (const [k, fv] of Object.entries(v.mapValue.fields || {})) obj[k] = fromFirestoreValue(fv);
+    return obj;
+  }
+  return null;
+}
+
+async function fsSet(path, data) {
+  const url = `${fsBase()}/${path}`;
+  const resp = await fetch(url, {
+    method: 'PATCH',
+    headers: { 'Authorization': `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(toFirestoreDoc(data)),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`PATCH ${path}: ${resp.status} ${err}`);
+  }
+  return resp.json();
+}
+
+async function fsGet(path) {
+  const url = `${fsBase()}/${path}`;
+  const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${TOKEN}` } });
+  if (!resp.ok) throw new Error(`GET ${path}: ${resp.status}`);
+  return resp.json();
+}
+
+async function fsList(collectionPath) {
+  const url = `${fsBase()}/${collectionPath}`;
+  const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${TOKEN}` } });
+  if (!resp.ok) throw new Error(`LIST ${collectionPath}: ${resp.status}`);
+  return resp.json();
+}
+
+// ── Google OAuth (popup) ──
+function googleLogin() {
+  return new Promise((resolve, reject) => {
+    const clientId = CFG.apiKey; // We need the OAuth client ID, not apiKey
+    // Use Google Identity Services via a popup approach with the Firebase Auth REST API
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+      `client_id=${encodeURIComponent(CFG.clientId || '')}&` +
+      `redirect_uri=${encodeURIComponent(window.location.origin + window.location.pathname)}&` +
+      `response_type=token&` +
+      `scope=openid email profile&` +
+      `prompt=select_account`;
+
+    // Instead, let's use Firebase Auth REST API with signInWithIdp
+    // Actually, the simplest approach for Chromebook: use Firebase Auth REST API
+    // Step 1: Get Google OAuth token via popup
+    // Step 2: Exchange it for Firebase ID token
+
+    // For simplicity, we'll use a popup window approach
+    const width = 500, height = 600;
+    const left = (screen.width - width) / 2, top = (screen.height - height) / 2;
+    const popup = window.open(authUrl, 'googleLogin', `width=${width},height=${height},left=${left},top=${top}`);
+
+    const timer = setInterval(() => {
+      try {
+        if (popup.closed) { clearInterval(timer); reject(new Error('ポップアップが閉じられました')); return; }
+        const url = popup.location.href;
+        if (url.includes('access_token=')) {
+          clearInterval(timer);
+          const hash = popup.location.hash.substring(1);
+          const params = new URLSearchParams(hash);
+          popup.close();
+          resolve(params.get('access_token'));
+        }
+      } catch (e) { /* cross-origin, keep waiting */ }
+    }, 200);
+  });
+}
+
+async function firebaseSignIn(googleAccessToken) {
+  // Exchange Google access token for Firebase ID token
+  const resp = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=${CFG.apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      postBody: `access_token=${googleAccessToken}&providerId=google.com`,
+      requestUri: window.location.href,
+      returnSecureToken: true,
+      returnIdpCredential: true,
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json();
+    throw new Error(err.error?.message || 'Firebase認証エラー');
+  }
+  return resp.json();
+}
+
+// ── UI helpers ──
+function show(id) { document.getElementById(id).classList.remove('hidden'); }
+function hide(id) { document.getElementById(id).classList.add('hidden'); }
+function setCard(id, cls) {
+  const el = document.getElementById(id);
+  el.classList.remove('active','done','err');
+  if (cls) el.classList.add(cls);
+}
+function setBadge(id, cls, text) {
+  const el = document.getElementById(id);
+  el.className = 'badge ' + cls;
+  el.textContent = text;
+}
+function log(targetId, msg, cls='') {
+  const el = document.getElementById(targetId);
+  el.classList.remove('hidden');
+  el.innerHTML += `<span class="${cls}">${msg}</span>\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+// ── Step 1 ──
+async function doStep1() {
+  const apiKey = document.getElementById('apiKey').value.trim();
+  const authDomain = document.getElementById('authDomain').value.trim();
+  const projectId = document.getElementById('projectId').value.trim();
+
+  if (!apiKey || !authDomain || !projectId) { alert('3つの項目をすべて入力してください'); return; }
+
+  CFG = { apiKey, authDomain, projectId };
+
+  // Extract OAuth client ID from authDomain (format: project-id.firebaseapp.com)
+  // We'll need the Web Client ID. For Firebase projects, we can look it up.
+  // Actually, we need to get the OAuth client ID from the Firebase project.
+  // Let's try to fetch it from the Firebase Auth config
+  setBadge('s1badge', 'badge-run', '確認中...');
+
+  try {
+    // Test Firestore connectivity (will fail with auth error, but that's ok - confirms project exists)
+    const resp = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/config/app`);
+    // 404 = doc not found (project exists, firestore works)
+    // 403 = auth required (project exists, firestore works)
+    // Other = project might not exist
+    if (resp.status === 404 || resp.status === 200 || resp.status === 403) {
+      setBadge('s1badge', 'badge-ok', `接続OK (${projectId})`);
+      setCard('s1', 'done');
+      setCard('s2', 'active');
+      show('s2b');
+    } else {
+      throw new Error(`プロジェクト "${projectId}" に接続できません (${resp.status})`);
+    }
+  } catch (e) {
+    if (e.message.includes('Failed to fetch')) {
+      // Network issue, but might still work - let's proceed
+      setBadge('s1badge', 'badge-ok', `設定保存 (${projectId})`);
+      setCard('s1', 'done');
+      setCard('s2', 'active');
+      show('s2b');
+    } else {
+      setBadge('s1badge', 'badge-err', 'エラー');
+      alert(e.message);
+    }
+  }
+}
+
+// ── Step 2: Login via Firebase Auth REST API ──
+async function doStep2() {
+  setBadge('s2badge', 'badge-run', 'ログイン中...');
+
+  try {
+    // Method: Open Google sign-in page, get the auth code, exchange for Firebase token
+    // We use the Firebase Auth signInWithPopup equivalent via REST
+
+    // First, we need to get the Google OAuth client ID for this Firebase project
+    // The simplest way: get it from the authDomain's __/auth/handler page
+    // OR we can use the Firebase Auth REST API's createAuthUri to get the auth URL
+
+    // Approach: Use Firebase Auth REST API signInWithIdp
+    // But we need a Google OAuth token first.
+    // Let's use the Google Sign-In for Web (legacy) approach with a popup
+
+    // Get OAuth config from Firebase
+    const configResp = await fetch(`https://www.googleapis.com/identitytoolkit/v3/relyingparty/getProjectConfig?key=${CFG.apiKey}`);
+    const configData = await configResp.json();
+
+    let clientId = '';
+    if (configData.authorizedDomains && configData.idpConfig) {
+      for (const idp of configData.idpConfig) {
+        if (idp.provider === 'google.com' && idp.clientId) {
+          clientId = idp.clientId;
+          break;
+        }
+      }
+    }
+
+    if (!clientId) {
+      // Try alternate API
+      const resp2 = await fetch(`https://identitytoolkit.googleapis.com/v2/projects/${CFG.projectId}/defaultSupportedIdpConfigs/google.com?key=${CFG.apiKey}`);
+      if (resp2.ok) {
+        const d = await resp2.json();
+        clientId = d.clientId;
+      }
+    }
+
+    if (!clientId) {
+      throw new Error('Google OAuth Client ID を取得できませんでした。\nFirebase Console → Authentication → Google が有効か確認してください。');
+    }
+
+    CFG.clientId = clientId;
+
+    // Open Google OAuth popup
+    const redirectUri = window.location.origin + window.location.pathname;
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+      `client_id=${encodeURIComponent(clientId)}&` +
+      `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+      `response_type=token&` +
+      `scope=${encodeURIComponent('openid email profile')}&` +
+      `prompt=select_account`;
+
+    const googleToken = await new Promise((resolve, reject) => {
+      const w = 500, h = 600;
+      const l = (screen.width - w) / 2, t = (screen.height - h) / 2;
+      const popup = window.open(authUrl, 'googleAuth', `width=${w},height=${h},left=${l},top=${t}`);
+
+      if (!popup) { reject(new Error('ポップアップがブロックされました。ポップアップを許可してください。')); return; }
+
+      const check = setInterval(() => {
+        try {
+          if (popup.closed) { clearInterval(check); reject(new Error('ログインがキャンセルされました')); return; }
+          const u = popup.location.href;
+          if (u && u.includes('access_token=')) {
+            clearInterval(check);
+            const hash = popup.location.hash.substring(1);
+            const params = new URLSearchParams(hash);
+            popup.close();
+            resolve(params.get('access_token'));
+          }
+        } catch(e) { /* cross-origin, keep polling */ }
+      }, 300);
+
+      // Timeout after 2 minutes
+      setTimeout(() => { clearInterval(check); try{popup.close();}catch(e){} reject(new Error('タイムアウト')); }, 120000);
+    });
+
+    // Exchange Google token for Firebase ID token
+    const fbAuth = await firebaseSignIn(googleToken);
+    TOKEN = fbAuth.idToken;
+    USER = {
+      uid: fbAuth.localId,
+      displayName: fbAuth.displayName || fbAuth.email,
+      email: fbAuth.email,
+    };
+
+    document.getElementById('userInfo').innerHTML =
+      `👤 <b>${USER.displayName}</b> (${USER.email})<br><code style="font-size:11px">UID: ${USER.uid}</code>`;
+    show('userInfo');
+
+    setBadge('s2badge', 'badge-ok', USER.displayName);
+    setCard('s2', 'done');
+    setCard('s3', 'active');
+    show('s3b');
+    document.getElementById('rulesText').textContent = RULES;
+
+  } catch (e) {
+    setBadge('s2badge', 'badge-err', 'エラー');
+    alert('ログインエラー: ' + e.message);
+  }
+}
+
+// ── Step 3 ──
+function copyRules() {
+  navigator.clipboard.writeText(RULES).then(() => {
+    show('rulesCopied');
+    setTimeout(() => hide('rulesCopied'), 3000);
+  }).catch(() => {
+    // Fallback: select the text
+    const el = document.getElementById('rulesText');
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+    alert('テキストを選択しました。Ctrl+C でコピーしてください。');
+  });
+}
+
+function doStep3() {
+  setCard('s3', 'done');
+  setCard('s4', 'active');
+  show('s4b');
+}
+
+// ── Step 4: Seed data ──
+async function doStep4() {
+  const logId = 'seedLog';
+  setBadge('s4badge', 'badge-run', '投入中...');
+  document.getElementById('seedBtn').disabled = true;
+
+  try {
+    // config/app
+    log(logId, '📝 config/app を作成中...', 'bl');
+    await fsSet('config/app', {
+      teacherUids: [USER.uid],
+      defaultQuestionCount: 10,
+      slackWebhookConfigured: false,
+    });
+    log(logId, `  ✅ teacherUids: ["${USER.uid}"]`, 'ok');
+
+    // Templates
+    const templates = getTemplates();
+    for (const tmpl of templates) {
+      log(logId, `📝 templates/${tmpl.templateId} ...`, 'bl');
+      await fsSet(`templates/${tmpl.templateId}`, tmpl);
+      log(logId, `  ✅ ${tmpl.meta.displayName}`, 'ok');
+    }
+
+    log(logId, `\n🎉 完了！ config/app + ${templates.length} テンプレートを投入しました`, 'ok');
+    setBadge('s4badge', 'badge-ok', `${templates.length}テンプレ投入完了`);
+    setCard('s4', 'done');
+    setCard('s5', 'active');
+    show('s5b');
+
+  } catch (e) {
+    log(logId, `\n❌ エラー: ${e.message}`, 'er');
+    log(logId, '💡 Firestore が「テストモード」で作成されているか確認してください。', 'wr');
+    setBadge('s4badge', 'badge-err', 'エラー');
+    document.getElementById('seedBtn').disabled = false;
+  }
+}
+
+// ── Step 5: Verify ──
+async function doStep5() {
+  const logId = 'verifyLog';
+  setBadge('s5badge', 'badge-run', '確認中...');
+
+  try {
+    // config/app
+    const configDoc = await fsGet('config/app');
+    if (configDoc.fields) {
+      const uids = configDoc.fields.teacherUids?.arrayValue?.values?.map(v => v.stringValue) || [];
+      log(logId, `✅ config/app: teacherUids=${JSON.stringify(uids)}`, 'ok');
+    } else {
+      log(logId, '❌ config/app が見つかりません', 'er');
+    }
+
+    // templates
+    const listResp = await fsList('templates');
+    const docs = listResp.documents || [];
+    log(logId, `\n📦 templates: ${docs.length} 件`, 'bl');
+    for (const doc of docs) {
+      const id = doc.name.split('/').pop();
+      const name = doc.fields?.meta?.mapValue?.fields?.displayName?.stringValue || '';
+      const type = doc.fields?.type?.stringValue || '';
+      log(logId, `  ✅ ${id} — ${name} [${type}]`, 'ok');
+    }
+
+    if (docs.length === 10) {
+      log(logId, '\n🎉 全10テンプレート確認OK！ Firebase Console でもご確認ください。', 'ok');
+      setBadge('s5badge', 'badge-ok', '全10テンプレOK');
+      setCard('s5', 'done');
+    } else {
+      log(logId, `\n⚠ テンプレート数: ${docs.length}/10`, 'wr');
+      setBadge('s5badge', 'badge-err', `${docs.length}/10`);
+    }
+  } catch (e) {
+    log(logId, `❌ エラー: ${e.message}`, 'er');
+    setBadge('s5badge', 'badge-err', 'エラー');
+  }
+}
+
+// ── Template data ──
+function getTemplates() {
+  return [
+    {templateId:'coin_optimal_payment',generatorId:'pool',type:'numeric',grade:2,unit:'お金',tags:['硬貨','おつり','最適化'],meta:{displayName:'おつり最小化',description:'手持ち硬貨でおつり枚数が最小になる支払い額を求める'},pool:[{poolIndex:0,prompt:'152円（100円玉 1まい、50円玉 1まい、1円玉 2まい）を もっています。\n82円の けしゴムを 買います。\nおつりの こうかの まい数を いちばん 少なく するには、いくら はらえば よいですか。',images:null,correctAnswer:'102',explanation:'102円はらうと、おつりは 102−82＝20円（10円玉2まい）です。'},{poolIndex:1,prompt:'100円玉 1まい、10円玉 3まい、1円玉 4まい を持っています。\nバス代は 73円です。\nおつりの まい数が いちばん 少なくなるように 払うとき、いくら 払えば よいですか。',images:null,correctAnswer:'103',explanation:'103円はらうと、おつりは 103−73＝30円（10円玉3まい）です。'}]},
+    {templateId:'expr_scene_matching',generatorId:'pool',type:'mcq',grade:2,unit:'たし算とひき算・かけ算',tags:['式と場面'],meta:{displayName:'式と場面のマッチング',description:'式に合う場面を選ぶ'},pool:[{poolIndex:0,subId:'2-1',prompt:'6×4 の もんだいは、どれですか。',images:null,choices:[{label:'えんぴつが 6本 あります。4本 もらったので、ぜんぶで 何本に なりましたか。',semantic:{kind:'add',subtype:'increase'}},{label:'えんぴつが 6本ずつ 入った はこが 4はこ あります。えんぴつは ぜんぶで 何本 ありますか。',semantic:{kind:'mul',subtype:'per_x_groups'}},{label:'えんぴつを 4本 つかったら、6本に なりました。はじめに 何本 ありましたか。',semantic:{kind:'add',subtype:'count_back'}},{label:'えんぴつが 6本 あります。4本 あげると、のこりは 何本ですか。',semantic:{kind:'sub',subtype:'take_away'}}],correctAnswer:1,explanation:'「6本ずつ」×「4はこ」= 6×4'},{poolIndex:1,subId:'2-2',prompt:'□＋47＝83 に合う場面はどれですか。',images:null,choices:[{label:'47人 帰ったら 83人に なった',semantic:null},{label:'83人のうち 47人 帰った',semantic:{kind:'sub',subtype:'take_away'}},{label:'47人 来て 83人に なった',semantic:{kind:'add',subtype:'increase',unknownPosition:'operand1'}},{label:'83人から 47人 いなくなった',semantic:{kind:'sub',subtype:'take_away'}}],correctAnswer:2,explanation:'□＋47＝83 →「47人来て83人になった」'}]},
+    {templateId:'cut_count_triangles',generatorId:'pool',type:'numeric',grade:2,unit:'図形',tags:['切断','三角形'],meta:{displayName:'直線切断→三角形の数',description:'丸いケーキを切ったときの三角形の数'},pool:[{poolIndex:0,prompt:'丸いケーキを 3回 まっすぐに 切りました。\nできる三角形は いくつ ありますか。',images:{prompt:'svg/cut_circle_3lines_triangle.svg',choices:null},correctAnswer:'1',explanation:'3本が別々の場所で交わると、まん中に三角形が1こ。'}]},
+    {templateId:'cut_quadrilaterals',generatorId:'pool',type:'mcq',grade:2,unit:'図形',tags:['切断','四角形'],meta:{displayName:'直線切断→四角形',description:'円を4回切って四角形を最大化'},pool:[{poolIndex:0,subId:'4-1',prompt:'まるい かみを まっすぐな 線で 4回 切ります。\n四角形が いちばん 多く できるのは どれですか。',images:{prompt:null,choices:['svg/cut_circle_4lines_star.svg','svg/cut_circle_4lines_parallel.svg','svg/cut_circle_4lines_grid_choice.svg']},choices:[{label:'ア'},{label:'イ'},{label:'ウ'}],correctAnswer:2,explanation:'ウ（格子型）でまん中に四角形1こ。'},{poolIndex:1,subId:'4-2',prompt:'丸いピザを 4回 まっすぐに 切りました。\n四角形は いくつ できますか。',images:{prompt:'svg/cut_circle_4lines_grid.svg',choices:null},overrideType:'numeric',correctAnswer:'1',explanation:'まん中の1こだけが四角形。'}]},
+    {templateId:'graph_sort_reason',generatorId:'pool',type:'multi',grade:2,unit:'データ',tags:['棒グラフ','並べ替え'],meta:{displayName:'グラフの並べ替えの理由',description:'並べ替えたグラフがわかりやすい理由を選ぶ'},pool:[{poolIndex:0,prompt:'2年1組で すきな きゅうしょくの メニューを しらべました。\n①名前のあいうえお順 ②人数の多い順\n②のほうがわかりやすいりゆうを すべて えらびましょう。',images:null,choices:[{label:'人数が多いものからじゅんにならんでいるので、くらべやすい'},{label:'いちばん人気のメニューがすぐわかる'},{label:'名前のじゅんにならんでいるので、さがしやすい'},{label:'ぼうの色がきれいだから'}],correctAnswer:[true,true,false,false],explanation:'②は人数の多い順なので人気メニューがすぐわかります。'}]},
+    {templateId:'equation_scene_sub_unknown',generatorId:'pool',type:'mcq',grade:2,unit:'たし算とひき算',tags:['穴あき式','場面選択'],meta:{displayName:'穴あき式の場面選択',description:'72−□＝45に合う場面を選ぶ'},pool:[{poolIndex:0,prompt:'72−□＝45 に合う場面はどれですか。',images:null,choices:[{label:'72人のうち 45人 帰った',semantic:{kind:'sub',subtype:'take_away',unknownPosition:'result'}},{label:'45人 来たら 72人に なった',semantic:{kind:'add',subtype:'increase',unknownPosition:'operand1'}},{label:'72人から 何人か 帰ったら 45人に なった',semantic:{kind:'sub',subtype:'take_away',unknownPosition:'operand2'}},{label:'45人のうち 72人 帰った',semantic:null}],correctAnswer:2,explanation:'72−□＝45 →「72人から何人か帰ったら45人になった」'}]},
+    {templateId:'min_cuts_for_shape',generatorId:'pool',type:'numeric',grade:2,unit:'図形',tags:['切断','最小回数'],meta:{displayName:'最小切断回数',description:'図形を作るのに最低何回切るか'},pool:[{poolIndex:0,prompt:'まるい かみで 正方形を 1つ 作りたいです。少なくとも 何回 切りますか。',images:null,correctAnswer:'4',explanation:'正方形は4辺→4回。'},{poolIndex:1,prompt:'丸いケーキで 三角形を 1つ 作るには 少なくとも 何回 切りますか。',images:null,correctAnswer:'3',explanation:'三角形は3辺→3回。'}]},
+    {templateId:'array_counting_strategies',generatorId:'pool',type:'mcq',grade:2,unit:'かけ算',tags:['配列','工夫した数え方'],meta:{displayName:'配列の工夫した数え方',description:'いちご配列の式と考え方を対応させる'},pool:[{poolIndex:0,prompt:'いちごが5-5-3-3とならんでいます。\nゆいさんは 5×2＝10、3×2＝6、10＋6＝16 としました。考え方は？',images:{prompt:'svg/array_strawberry_5533.svg',choices:null},choices:[{label:'ぜんぶ5こ×4だんと考えて多い分をひく'},{label:'上2だんと下2だんに分けてたす'},{label:'ぜんぶ3こ×4だんと考えてたりない分をたす'}],correctAnswer:1,explanation:'上2だん+下2だんに分けてたす→イ'},{poolIndex:1,prompt:'いちごが5-5-3-3とならんでいます。\nそうたさんは 5×4＝20、2×2＝4、20−4＝16 としました。考え方は？',images:{prompt:'svg/array_strawberry_5533.svg',choices:null},choices:[{label:'ぜんぶ5こ×4だんと考えて多い分をひく'},{label:'上2だんと下2だんに分けてたす'},{label:'ぜんぶ3こ×4だんと考えてたりない分をたす'}],correctAnswer:0,explanation:'5×4と多めに考えて、ないところをひく→ア'},{poolIndex:2,prompt:'いちごが5-5-3-3とならんでいます。\nはるさんは 3×4＝12、2×2＝4、12＋4＝16 としました。考え方は？',images:{prompt:'svg/array_strawberry_5533.svg',choices:null},choices:[{label:'ぜんぶ5こ×4だんと考えて多い分をひく'},{label:'上2だんと下2だんに分けてたす'},{label:'ぜんぶ3こ×4だんと考えてたりない分をたす'}],correctAnswer:2,explanation:'3×4と少なめに考えて、たりない分をたす→ウ'}]},
+    {templateId:'measure_from_reference',generatorId:'dynamic',type:'numeric',grade:2,unit:'長さ',tags:['cm','m','基準量'],meta:{displayName:'基準量との差',description:'1mの棒より○cm長い/短い→何cm？'},vars:{referenceM:{type:'int',min:1,max:2},referenceCm:{type:'computed',expr:'vars.referenceM*100'},diff:{type:'int',min:5,max:50},direction:{type:'choice',options:['長い','短い']},answer:{type:'computed',expr:"vars.direction==='長い'?vars.referenceCm+vars.diff:vars.referenceCm-vars.diff"}},constraints:[{id:'positive_answer',expr:'vars.answer>0'}],generation:{method:'rejection',maxTries:50},promptTemplate:'{{subject}}は {{referenceM}}mの ぼうより {{diff}}cm {{direction}} です。何cmですか。',correctAnswerExpr:'String(vars.answer)',explanationTemplate:'{{referenceM}}m＝{{referenceCm}}cm。{{direction}}ので{{answer}}cm。',subjectPool:['あきらさんのせの高さ','みじかいリボン','つくえのよこの長さ','なわとびのなわ']},
+    {templateId:'triangle_tile_count',generatorId:'pool',type:'numeric',grade:2,unit:'図形',tags:['直角三角形','タイル'],meta:{displayName:'タイルで図形をつくる',description:'直角三角形タイルで図形を構成する枚数'},pool:[{poolIndex:0,subId:'10-1a',prompt:'三角形カードで正方形（2cm×2cm）を作ります。何まい？',images:{prompt:'svg/tile_right_triangle.svg',choices:null},correctAnswer:'2',explanation:'直角三角形2まいで正方形1つ→2まい。'},{poolIndex:1,subId:'10-1b',prompt:'三角形カードで長方形（4cm×2cm）を作ります。何まい？',images:{prompt:'svg/tile_right_triangle.svg',choices:null},correctAnswer:'4',explanation:'正方形2つ分→4まい。'},{poolIndex:2,subId:'10-1c',prompt:'三角形カードで大きい正方形（4cm×4cm）を作ります。何まい？',images:{prompt:'svg/tile_right_triangle.svg',choices:null},correctAnswer:'8',explanation:'正方形4つ分→8まい。'},{poolIndex:3,subId:'10-2',prompt:'三角形タイルで長方形（4cm×2cm）を作ります。何まい？',images:{prompt:'svg/tile_target_rect_4x2.svg',choices:null},overrideType:'mcq',choices:[{label:'4'},{label:'6'},{label:'8'},{label:'10'}],correctAnswer:0,explanation:'正方形2つ分→4まい。'}]},
+  ];
+}
+
+// ── Handle OAuth redirect (if token is in URL hash) ──
+(function checkRedirect() {
+  if (window.location.hash.includes('access_token=')) {
+    // We're in the popup - the parent will read our URL
+    // Just show a message
+    document.body.innerHTML = '<div style="text-align:center;padding:60px;font-size:18px">✅ ログイン完了！<br><small style="color:#888">このウィンドウは自動で閉じます...</small></div>';
+  }
+})();
+</script>
+</body>
+</html>
