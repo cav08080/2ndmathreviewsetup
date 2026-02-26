@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Firestore データ投入ツール（REST API版）</title>
 <style>
   :root { --bg:#f8f9fa; --card:#fff; --blue:#4285f4; --green:#34a853; --red:#ea4335; --yellow:#fbbc04; }
@@ -18,13 +18,16 @@
   input[type=text]{width:100%;padding:8px 12px;border:2px solid #e0e0e0;border-radius:8px;font-size:13px;font-family:monospace;margin-top:4px}
   input:focus{border-color:var(--blue);outline:none}
   .row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-  .row label{width:100px;font-size:13px;font-weight:700;flex-shrink:0}
+  .row label{width:110px;font-size:13px;font-weight:700;flex-shrink:0}
   button{padding:8px 20px;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;margin-top:8px}
   .btn-blue{background:var(--blue);color:#fff} .btn-blue:hover{background:#3367d6}
   .btn-green{background:var(--green);color:#fff} .btn-yellow{background:var(--yellow);color:#333}
   .btn-blue:disabled,.btn-green:disabled{background:#ccc;cursor:not-allowed}
   .badge{display:inline-block;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700;margin-left:8px}
-  .badge-ok{background:#e6f4ea;color:var(--green)} .badge-err{background:#fce8e6;color:var(--red)} .badge-wait{background:#f1f1f1;color:#888} .badge-run{background:#e8f0fe;color:var(--blue)}
+  .badge-ok{background:#e6f4ea;color:var(--green)}
+  .badge-err{background:#fce8e6;color:var(--red)}
+  .badge-wait{background:#f1f1f1;color:#888}
+  .badge-run{background:#e8f0fe;color:var(--blue)}
   .log{margin-top:12px;background:#f5f5f5;border-radius:8px;padding:12px;font-size:12px;font-family:monospace;max-height:350px;overflow-y:auto;white-space:pre-wrap;line-height:1.8}
   .log .ok{color:var(--green)} .log .er{color:var(--red)} .log .wr{color:#f57c00} .log .bl{color:var(--blue)}
   pre.rules{background:#263238;color:#eee;padding:12px;border-radius:8px;font-size:10px;overflow:auto;max-height:180px;line-height:1.5;margin-top:8px}
@@ -51,12 +54,14 @@
         <li>左メニュー「Firestore Database」→「データベースを作成」→ <b>テストモード</b> で開始</li>
         <li>左メニュー「Authentication」→「始める」→「Google」を有効化</li>
         <li>⚙ プロジェクト設定 → 全般 → 「ウェブアプリ」を追加</li>
-        <li>表示される firebaseConfig の値を下に入力</li>
+        <li>表示される firebaseConfig の値（apiKey/authDomain/projectId）を下に入力</li>
+        <li><b>（推奨）clientId</b> は Google Cloud Console → OAuth 2.0 クライアントID（Web client）の「クライアントID」</li>
       </ol>
     </details>
     <div class="row"><label>apiKey</label><input type="text" id="apiKey" placeholder="AIzaSy..."></div>
     <div class="row"><label>authDomain</label><input type="text" id="authDomain" placeholder="your-app.firebaseapp.com"></div>
     <div class="row"><label>projectId</label><input type="text" id="projectId" placeholder="your-app-id"></div>
+    <div class="row"><label>clientId</label><input type="text" id="clientId" placeholder="（推奨）123...apps.googleusercontent.com"></div>
     <button class="btn-blue" onclick="doStep1()">接続テスト</button>
     <span class="badge badge-wait" id="s1badge">未接続</span>
   </div>
@@ -155,9 +160,7 @@ function toFirestoreValue(val) {
   if (Array.isArray(val)) return { arrayValue: { values: val.map(toFirestoreValue) } };
   if (typeof val === 'object') {
     const fields = {};
-    for (const [k, v] of Object.entries(val)) {
-      fields[k] = toFirestoreValue(v);
-    }
+    for (const [k, v] of Object.entries(val)) fields[k] = toFirestoreValue(v);
     return { mapValue: { fields } };
   }
   return { stringValue: String(val) };
@@ -165,25 +168,8 @@ function toFirestoreValue(val) {
 
 function toFirestoreDoc(obj) {
   const fields = {};
-  for (const [k, v] of Object.entries(obj)) {
-    fields[k] = toFirestoreValue(v);
-  }
+  for (const [k, v] of Object.entries(obj)) fields[k] = toFirestoreValue(v);
   return { fields };
-}
-
-function fromFirestoreValue(v) {
-  if ('stringValue' in v) return v.stringValue;
-  if ('integerValue' in v) return parseInt(v.integerValue);
-  if ('doubleValue' in v) return v.doubleValue;
-  if ('booleanValue' in v) return v.booleanValue;
-  if ('nullValue' in v) return null;
-  if ('arrayValue' in v) return (v.arrayValue.values || []).map(fromFirestoreValue);
-  if ('mapValue' in v) {
-    const obj = {};
-    for (const [k, fv] of Object.entries(v.mapValue.fields || {})) obj[k] = fromFirestoreValue(fv);
-    return obj;
-  }
-  return null;
 }
 
 async function fsSet(path, data) {
@@ -214,59 +200,25 @@ async function fsList(collectionPath) {
   return resp.json();
 }
 
-// ── Google OAuth (popup) ──
-function googleLogin() {
-  return new Promise((resolve, reject) => {
-    const clientId = CFG.apiKey; // We need the OAuth client ID, not apiKey
-    // Use Google Identity Services via a popup approach with the Firebase Auth REST API
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
-      `client_id=${encodeURIComponent(CFG.clientId || '')}&` +
-      `redirect_uri=${encodeURIComponent(window.location.origin + window.location.pathname)}&` +
-      `response_type=token&` +
-      `scope=openid email profile&` +
-      `prompt=select_account`;
-
-    // Instead, let's use Firebase Auth REST API with signInWithIdp
-    // Actually, the simplest approach for Chromebook: use Firebase Auth REST API
-    // Step 1: Get Google OAuth token via popup
-    // Step 2: Exchange it for Firebase ID token
-
-    // For simplicity, we'll use a popup window approach
-    const width = 500, height = 600;
-    const left = (screen.width - width) / 2, top = (screen.height - height) / 2;
-    const popup = window.open(authUrl, 'googleLogin', `width=${width},height=${height},left=${left},top=${top}`);
-
-    const timer = setInterval(() => {
-      try {
-        if (popup.closed) { clearInterval(timer); reject(new Error('ポップアップが閉じられました')); return; }
-        const url = popup.location.href;
-        if (url.includes('access_token=')) {
-          clearInterval(timer);
-          const hash = popup.location.hash.substring(1);
-          const params = new URLSearchParams(hash);
-          popup.close();
-          resolve(params.get('access_token'));
-        }
-      } catch (e) { /* cross-origin, keep waiting */ }
-    }, 200);
-  });
-}
-
+// ── Firebase Auth REST: exchange Google access token -> Firebase ID token ──
 async function firebaseSignIn(googleAccessToken) {
-  // Exchange Google access token for Firebase ID token
   const resp = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=${CFG.apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       postBody: `access_token=${googleAccessToken}&providerId=google.com`,
-      requestUri: window.location.href,
+      requestUri: window.location.origin + window.location.pathname,
       returnSecureToken: true,
       returnIdpCredential: true,
     }),
   });
   if (!resp.ok) {
-    const err = await resp.json();
-    throw new Error(err.error?.message || 'Firebase認証エラー');
+    let errMsg = 'Firebase認証エラー';
+    try {
+      const err = await resp.json();
+      errMsg = err?.error?.message || errMsg;
+    } catch (_) {}
+    throw new Error(errMsg);
   }
   return resp.json();
 }
@@ -296,23 +248,20 @@ async function doStep1() {
   const apiKey = document.getElementById('apiKey').value.trim();
   const authDomain = document.getElementById('authDomain').value.trim();
   const projectId = document.getElementById('projectId').value.trim();
+  const clientId = document.getElementById('clientId').value.trim();
 
-  if (!apiKey || !authDomain || !projectId) { alert('3つの項目をすべて入力してください'); return; }
+  if (!apiKey || !authDomain || !projectId) {
+    alert('apiKey / authDomain / projectId をすべて入力してください');
+    return;
+  }
 
-  CFG = { apiKey, authDomain, projectId };
+  CFG = { apiKey, authDomain, projectId, clientId };
 
-  // Extract OAuth client ID from authDomain (format: project-id.firebaseapp.com)
-  // We'll need the Web Client ID. For Firebase projects, we can look it up.
-  // Actually, we need to get the OAuth client ID from the Firebase project.
-  // Let's try to fetch it from the Firebase Auth config
   setBadge('s1badge', 'badge-run', '確認中...');
 
   try {
-    // Test Firestore connectivity (will fail with auth error, but that's ok - confirms project exists)
+    // Firestore疎通（認証なしでも 404/403 が返れば “到達している” と判断）
     const resp = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/config/app`);
-    // 404 = doc not found (project exists, firestore works)
-    // 403 = auth required (project exists, firestore works)
-    // Other = project might not exist
     if (resp.status === 404 || resp.status === 200 || resp.status === 403) {
       setBadge('s1badge', 'badge-ok', `接続OK (${projectId})`);
       setCard('s1', 'done');
@@ -322,8 +271,7 @@ async function doStep1() {
       throw new Error(`プロジェクト "${projectId}" に接続できません (${resp.status})`);
     }
   } catch (e) {
-    if (e.message.includes('Failed to fetch')) {
-      // Network issue, but might still work - let's proceed
+    if (String(e.message || '').includes('Failed to fetch')) {
       setBadge('s1badge', 'badge-ok', `設定保存 (${projectId})`);
       setCard('s1', 'done');
       setCard('s2', 'active');
@@ -335,54 +283,47 @@ async function doStep1() {
   }
 }
 
-// ── Step 2: Login via Firebase Auth REST API ──
+// ── Step 2: Login (NO v2 defaultSupportedIdpConfigs) ──
 async function doStep2() {
   setBadge('s2badge', 'badge-run', 'ログイン中...');
 
   try {
-    // Method: Open Google sign-in page, get the auth code, exchange for Firebase token
-    // We use the Firebase Auth signInWithPopup equivalent via REST
+    // ★ 1) まず手入力 clientId があればそれを使う
+    let clientId = (CFG.clientId || '').trim();
 
-    // First, we need to get the Google OAuth client ID for this Firebase project
-    // The simplest way: get it from the authDomain's __/auth/handler page
-    // OR we can use the Firebase Auth REST API's createAuthUri to get the auth URL
-
-    // Approach: Use Firebase Auth REST API signInWithIdp
-    // But we need a Google OAuth token first.
-    // Let's use the Google Sign-In for Web (legacy) approach with a popup
-
-    // Get OAuth config from Firebase
-    const configResp = await fetch(`https://www.googleapis.com/identitytoolkit/v3/relyingparty/getProjectConfig?key=${CFG.apiKey}`);
-    const configData = await configResp.json();
-
-    let clientId = '';
-    if (configData.authorizedDomains && configData.idpConfig) {
-      for (const idp of configData.idpConfig) {
-        if (idp.provider === 'google.com' && idp.clientId) {
-          clientId = idp.clientId;
-          break;
+    // ★ 2) なければ v3(getProjectConfig) で取得を試す（v2は使わない）
+    if (!clientId) {
+      const configResp = await fetch(
+        `https://www.googleapis.com/identitytoolkit/v3/relyingparty/getProjectConfig?key=${CFG.apiKey}`
+      );
+      if (!configResp.ok) {
+        throw new Error(`getProjectConfig 取得失敗: ${configResp.status}`);
+      }
+      const configData = await configResp.json();
+      if (configData?.idpConfig?.length) {
+        for (const idp of configData.idpConfig) {
+          if (idp.provider === 'google.com' && idp.clientId) {
+            clientId = idp.clientId;
+            break;
+          }
         }
       }
     }
 
+    // ★ 3) それでも取れなければ、手入力を促す
     if (!clientId) {
-      // Try alternate API
-      const resp2 = await fetch(`https://identitytoolkit.googleapis.com/v2/projects/${CFG.projectId}/defaultSupportedIdpConfigs/google.com?key=${CFG.apiKey}`);
-      if (resp2.ok) {
-        const d = await resp2.json();
-        clientId = d.clientId;
-      }
-    }
-
-    if (!clientId) {
-      throw new Error('Google OAuth Client ID を取得できませんでした。\nFirebase Console → Authentication → Google が有効か確認してください。');
+      throw new Error(
+        'Google OAuth Client ID を取得できませんでした。\n' +
+        'Step1 の clientId 欄に、Google Cloud Console の「OAuth 2.0 クライアントID（Web client）」のクライアントIDを貼り付けてください。'
+      );
     }
 
     CFG.clientId = clientId;
 
-    // Open Google OAuth popup
+    // Google OAuth popup（Implicit flow）
     const redirectUri = window.location.origin + window.location.pathname;
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+    const authUrl =
+      `https://accounts.google.com/o/oauth2/v2/auth?` +
       `client_id=${encodeURIComponent(clientId)}&` +
       `redirect_uri=${encodeURIComponent(redirectUri)}&` +
       `response_type=token&` +
@@ -394,11 +335,18 @@ async function doStep2() {
       const l = (screen.width - w) / 2, t = (screen.height - h) / 2;
       const popup = window.open(authUrl, 'googleAuth', `width=${w},height=${h},left=${l},top=${t}`);
 
-      if (!popup) { reject(new Error('ポップアップがブロックされました。ポップアップを許可してください。')); return; }
+      if (!popup) {
+        reject(new Error('ポップアップがブロックされました。ブラウザ設定でポップアップを許可してください。'));
+        return;
+      }
 
       const check = setInterval(() => {
         try {
-          if (popup.closed) { clearInterval(check); reject(new Error('ログインがキャンセルされました')); return; }
+          if (popup.closed) {
+            clearInterval(check);
+            reject(new Error('ログインがキャンセルされました'));
+            return;
+          }
           const u = popup.location.href;
           if (u && u.includes('access_token=')) {
             clearInterval(check);
@@ -407,12 +355,25 @@ async function doStep2() {
             popup.close();
             resolve(params.get('access_token'));
           }
-        } catch(e) { /* cross-origin, keep polling */ }
+        } catch (e) {
+          // cross-origin中は読めないので待つ
+        }
       }, 300);
 
-      // Timeout after 2 minutes
-      setTimeout(() => { clearInterval(check); try{popup.close();}catch(e){} reject(new Error('タイムアウト')); }, 120000);
+      setTimeout(() => {
+        clearInterval(check);
+        try { popup.close(); } catch (e) {}
+        reject(new Error('タイムアウト（2分）'));
+      }, 120000);
     });
+
+    if (!googleToken) {
+      throw new Error(
+        'Googleアクセストークンを取得できませんでした。\n' +
+        'もしポップアップに「redirect_uri_mismatch」が出る場合は、Google Cloud Console の該当 OAuth クライアントに\n' +
+        `redirect URI として次を追加してください:\n${redirectUri}`
+      );
+    }
 
     // Exchange Google token for Firebase ID token
     const fbAuth = await firebaseSignIn(googleToken);
@@ -435,7 +396,7 @@ async function doStep2() {
 
   } catch (e) {
     setBadge('s2badge', 'badge-err', 'エラー');
-    alert('ログインエラー: ' + e.message);
+    alert('ログインエラー: ' + (e?.message || e));
   }
 }
 
@@ -445,7 +406,6 @@ function copyRules() {
     show('rulesCopied');
     setTimeout(() => hide('rulesCopied'), 3000);
   }).catch(() => {
-    // Fallback: select the text
     const el = document.getElementById('rulesText');
     const range = document.createRange();
     range.selectNodeContents(el);
@@ -468,7 +428,6 @@ async function doStep4() {
   document.getElementById('seedBtn').disabled = true;
 
   try {
-    // config/app
     log(logId, '📝 config/app を作成中...', 'bl');
     await fsSet('config/app', {
       teacherUids: [USER.uid],
@@ -477,7 +436,6 @@ async function doStep4() {
     });
     log(logId, `  ✅ teacherUids: ["${USER.uid}"]`, 'ok');
 
-    // Templates
     const templates = getTemplates();
     for (const tmpl of templates) {
       log(logId, `📝 templates/${tmpl.templateId} ...`, 'bl');
@@ -505,7 +463,6 @@ async function doStep5() {
   setBadge('s5badge', 'badge-run', '確認中...');
 
   try {
-    // config/app
     const configDoc = await fsGet('config/app');
     if (configDoc.fields) {
       const uids = configDoc.fields.teacherUids?.arrayValue?.values?.map(v => v.stringValue) || [];
@@ -514,7 +471,6 @@ async function doStep5() {
       log(logId, '❌ config/app が見つかりません', 'er');
     }
 
-    // templates
     const listResp = await fsList('templates');
     const docs = listResp.documents || [];
     log(logId, `\n📦 templates: ${docs.length} 件`, 'bl');
@@ -558,8 +514,6 @@ function getTemplates() {
 // ── Handle OAuth redirect (if token is in URL hash) ──
 (function checkRedirect() {
   if (window.location.hash.includes('access_token=')) {
-    // We're in the popup - the parent will read our URL
-    // Just show a message
     document.body.innerHTML = '<div style="text-align:center;padding:60px;font-size:18px">✅ ログイン完了！<br><small style="color:#888">このウィンドウは自動で閉じます...</small></div>';
   }
 })();
